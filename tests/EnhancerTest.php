@@ -3,31 +3,38 @@
 require "vendor/autoload.php";
 use PHPUnit\Framework\TestCase;
 use Enhance\Enhancer;
+use Enhance\Elements;
 
-// function Elements
-require_once __DIR__ . "/fixtures/templates/my-context-child.php";
+global $allElements;
+$allElements = new Elements(__DIR__ . "/fixtures/templates");
 
-// HTML Elements
-global $MyHeadingHTML;
-$MyHeadingHTML = loadFixtureHTML("my-heading.html");
-global $MultipleSlotsHTML;
-$MultipleSlotsHTML = loadFixtureHTML("multiple-slots.html");
-global $MyContentHTML;
-$MyContentHTML = loadFixtureHTML("my-content.html");
-global $MyParagraphHTML;
-$MyParagraphHTML = loadFixtureHTML("my-paragraph.html");
+// // function Elements
+// require_once __DIR__ . "/fixtures/templates/my-context-child.php";
+// require_once __DIR__ . "/fixtures/templates/my-pre.php";
+// require_once __DIR__ . "/fixtures/templates/my-pre-page.php";
+
+// // HTML Elements
+// global $MyHeadingHTML;
+// $MyHeadingHTML = loadFixtureHTML("my-heading.html");
+// global $MultipleSlotsHTML;
+// $MultipleSlotsHTML = loadFixtureHTML("multiple-slots.html");
+// global $MyContentHTML;
+// $MyContentHTML = loadFixtureHTML("my-content.html");
+// global $MyParagraphHTML;
+// $MyParagraphHTML = loadFixtureHTML("my-paragraph.html");
 
 class EnhancerTest extends TestCase
 {
     public function testEnhance()
     {
-        global $MyHeadingHTML;
+        global $allElements;
         $enhancer = new Enhancer([
-            "elements" => [
-                "my-heading" => function ($state) use ($MyHeadingHTML) {
-                    return $MyHeadingHTML;
-                },
-            ],
+            "elements" => $allElements,
+            // "elements" => [
+            //     "my-heading" => function ($state) use ($MyHeadingHTML) {
+            //         return $MyHeadingHTML;
+            //     },
+            // ],
             "initialState" => ["message" => "Hello, World!"],
             "enhancedAttr" => false,
         ]);
@@ -108,6 +115,55 @@ class EnhancerTest extends TestCase
             strip($expectedString),
             strip($enhancer->ssr($htmlString)),
             "slotted content is added to the template"
+        );
+    }
+    public function testAddEnhancedAttr()
+    {
+        global $MyParagraphHTML;
+        $enhancer = new Enhancer([
+            "elements" => [
+                "my-paragraph" => function ($state) use ($MyParagraphHTML) {
+                    return $MyParagraphHTML;
+                },
+            ],
+            "bodyContent" => true,
+            "enhancedAttr" => true,
+        ]);
+
+        $htmlString =
+            "<my-paragraph><span slot=\"my-text\">I'm in a slot</span></my-paragraph>";
+        $expectedString =
+            "<my-paragraph enhanced=\"✨\"><p><span slot=\"my-text\">I'm in a slot</span></p></my-paragraph>";
+
+        $this->assertSame(
+            strip($expectedString),
+            strip($enhancer->ssr($htmlString)),
+            "Enhanced attribute is added to the template"
+        );
+    }
+    public function testPassStateThroughLevels()
+    {
+        global $allElements;
+        $enhancer = new Enhancer([
+            "elements" => $allElements,
+            "initialState" => ["items" => ["test"]],
+            "bodyContent" => true,
+            "enhancedAttr" => false,
+        ]);
+
+        $htmlString = "<my-pre-page items=\"\"></my-pre-page>";
+        $expectedString = <<<HTMLCONTENT
+            <my-pre-page items="">
+                <my-pre items="">
+                  <pre>test</pre>
+                </my-pre>
+              </my-pre-page>
+HTMLCONTENT;
+
+        $this->assertSame(
+            strip($expectedString),
+            strip($enhancer->ssr($htmlString)),
+            "Enhanced attribute is added to the template"
         );
     }
 }

@@ -2,6 +2,7 @@
 
 namespace Enhance;
 
+use Enhance\Elements;
 use DOMDocument;
 use DOMElement;
 use DOMNode;
@@ -17,21 +18,35 @@ class Enhancer
 
     public function __construct($options = [])
     {
-        $this->options = array_merge(
-            [
-                "elements" => [],
-                "initialState" => [],
-                "scriptTransforms" => [],
-                "styleTransforms" => [],
-                "uuidFunction" => function () {
-                    return $this->generateRandomString(15);
-                },
-                "bodyContent" => false,
-                "enhancedAttr" => true,
-            ],
-            $options
-        );
+        // Default options setup
+        $defaultOptions = [
+            "elements" => new Elements(), // Initialize with an empty Elements instance
+            "initialState" => [],
+            "scriptTransforms" => [],
+            "styleTransforms" => [],
+            "uuidFunction" => function () {
+                return $this->generateRandomString(15);
+            },
+            "bodyContent" => false,
+            "enhancedAttr" => true,
+        ];
 
+        // If 'elements' is provided in options and is an instance of Elements, use it directly
+        if (
+            isset($options["elements"]) &&
+            $options["elements"] instanceof Elements
+        ) {
+            $defaultOptions["elements"] = $options["elements"];
+        }
+        // Merge user options with default options
+        $this->options = array_merge($defaultOptions, $options);
+        // Make sure 'elements' is an instance of Elements, not an array
+        if (!($this->options["elements"] instanceof Elements)) {
+            // Fallback or throw an exception
+            throw new \Exception(
+                "The 'elements' option must be an instance of Elements."
+            );
+        }
         $this->elements = $this->options["elements"];
         $this->store = $this->options["initialState"];
     }
@@ -80,7 +95,7 @@ class Enhancer
             &$context
         ) {
             if ($this->isCustomElement($child->tagName)) {
-                if (isset($this->elements[$child->tagName])) {
+                if ($this->elements->exists($child->tagName)) {
                     $expandedTemplate = $this->expandTemplate([
                         "node" => $child,
                         "elements" => $this->elements,
@@ -132,16 +147,8 @@ class Enhancer
 
     function fillSlots($template, $node)
     {
-        print_r("template: \n");
-        print_r($template->ownerDocument->saveHTML($template));
-        print_r("node: \n");
-        print_r($node->ownerDocument->saveHTML($node));
         $slots = $this->findSlots($template); // Assuming this returns a DOMNodeList of slot elements
-        print_r("Slots: \n");
-        print_r($slots);
         $inserts = $this->findInserts($node); // Assuming this returns an array of insert elements
-        print_r("Inserts: \n");
-        print_r($inserts);
 
         $usedSlots = [];
         $usedInserts = [];
@@ -176,15 +183,9 @@ class Enhancer
             }
         }
 
-        print_r("Unnamed Slots: \n");
-        print_r($unnamedSlots);
         foreach ($unnamedSlots as $slot) {
-            print_r("Node : \n");
-            print_r($node);
             $unnamedChildren = [];
             foreach ($node->childNodes as $child) {
-                print_r("Unnamed Children: \n");
-                print_r($child);
                 if (
                     // $child instanceof DOMElement &&
                     !in_array($child, $usedInserts)
@@ -237,12 +238,8 @@ class Enhancer
     }
     public function findInserts(DOMNode $node)
     {
-        print_r("Has Inserts: \n");
-        print_r($node->ownerDocument->saveHTML($node));
         $inserts = [];
         foreach ($node->childNodes as $child) {
-            print_r("Has a Child: \n");
-            print_r($child->ownerDocument->saveHTML($child));
             if ($child instanceof DOMElement && $child->hasAttribute("slot")) {
                 $inserts[] = $child;
             }
@@ -448,7 +445,7 @@ class Enhancer
         // $attrs = $this->attrsToState($attrs);
         $state["attrs"] = $attrs;
         $doc = new DOMDocument();
-        $rendered = $elements[$name]($state);
+        $rendered = $elements->execute($name, $state);
         $fragment = $doc->createDocumentFragment();
         $fragment->appendXML($rendered);
         return $fragment;
