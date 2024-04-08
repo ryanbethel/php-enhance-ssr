@@ -5,45 +5,72 @@ use Exception;
 
 class Elements
 {
-    public $functions = [];
+    private $elements = [];
 
-    public function __construct($folderPath = null)
+    public function __construct($path = null)
     {
-        // Check if a valid folder path is provided
-        if ($folderPath && is_dir($folderPath)) {
-            // Handle PHP files
-            $phpFunctionFiles = glob($folderPath . "/*.php");
-            foreach ($phpFunctionFiles as $file) {
+        if ($path && is_dir($path)) {
+            // Load PHP files
+            foreach (glob("$path/*.php") as $file) {
                 require_once $file;
-                $functionName = basename($file, ".php");
-                $this->functions[$functionName] = $functionName; // Using function name as string
+                $functionName = $this->convertToSnakeCase(
+                    basename($file, ".php")
+                );
+                $camelFunctionName = $this->convertToCamelCase(
+                    basename($file, ".php")
+                );
+                $pascalFunctionName = ucfirst($camelFunctionName);
+                if (function_exists($functionName)) {
+                    $this->elements[$functionName] = $functionName;
+                } elseif (function_exists($camelFunctionName)) {
+                    $this->elements[$functionName] = $camelFunctionName;
+                } elseif (function_exists($pascalFunctionName)) {
+                    $this->elements[$functionName] = $pascalFunctionName;
+                } else {
+                    throw new Exception(
+                        "Element function '$functionName' does not exist."
+                    );
+                }
             }
 
-            // Handle HTML files
-            $htmlFunctionFiles = glob($folderPath . "/*.html");
-            foreach ($htmlFunctionFiles as $file) {
-                $functionName = basename($file, ".html");
-                // Read the HTML file content and wrap it in a closure
-                $htmlContent = file_get_contents($file);
-                $this->functions[$functionName] = function ($state) use (
-                    $htmlContent
+            // Load HTML files
+            foreach (glob("$path/*.html") as $file) {
+                $functionName = $this->convertToSnakeCase(
+                    basename($file, ".html")
+                );
+                $this->elements[$functionName] = function ($state = null) use (
+                    $file
                 ) {
-                    return $htmlContent;
+                    return file_get_contents($file);
                 };
             }
         }
     }
 
-    public function execute($functionName, ...$args)
+    public function execute($name, $state = null)
     {
-        if (isset($this->functions[$functionName])) {
-            // Dynamically call the function/closure by name with arguments
-            return call_user_func_array($this->functions[$functionName], $args);
+        $functionName = $this->convertToSnakeCase($name);
+        if (isset($this->elements[$functionName])) {
+            return call_user_func($this->elements[$functionName], $state);
         }
-        throw new Exception("Function $functionName does not exist.");
+        // Handle the case where the function does not exist
+        throw new Exception("Element function '$name' does not exist.");
     }
-    public function exists($functionName)
+
+    private function convertToSnakeCase($name)
     {
-        return isset($this->functions[$functionName]);
+        return strtolower(preg_replace("/-/", "_", $name));
+    }
+    private function convertToCamelCase($name)
+    {
+        return lcfirst(
+            str_replace(" ", "", ucwords(str_replace("-", " ", $name)))
+        );
+    }
+
+    public function exists($name)
+    {
+        $functionName = $this->convertToSnakeCase($name);
+        return isset($this->elements[$functionName]);
     }
 }

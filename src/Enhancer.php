@@ -18,9 +18,8 @@ class Enhancer
 
     public function __construct($options = [])
     {
-        // Default options setup
         $defaultOptions = [
-            "elements" => new Elements(), // Initialize with an empty Elements instance
+            "elements" => new Elements(),
             "initialState" => [],
             "scriptTransforms" => [],
             "styleTransforms" => [],
@@ -31,18 +30,14 @@ class Enhancer
             "enhancedAttr" => true,
         ];
 
-        // If 'elements' is provided in options and is an instance of Elements, use it directly
         if (
             isset($options["elements"]) &&
             $options["elements"] instanceof Elements
         ) {
             $defaultOptions["elements"] = $options["elements"];
         }
-        // Merge user options with default options
         $this->options = array_merge($defaultOptions, $options);
-        // Make sure 'elements' is an instance of Elements, not an array
         if (!($this->options["elements"] instanceof Elements)) {
-            // Fallback or throw an exception
             throw new \Exception(
                 "The 'elements' option must be an instance of Elements."
             );
@@ -54,7 +49,6 @@ class Enhancer
     public function ssr($htmlString)
     {
         $doc = new DOMDocument();
-        // if bodyContent is true, don't add html and body tags
         @$doc->loadHTML($htmlString, LIBXML_HTML_NODEFDTD);
 
         $htmlElement = $doc->getElementsByTagName("html")->item(0);
@@ -65,16 +59,29 @@ class Enhancer
             ? $doc->getElementsByTagName("head")->item(0)
             : null;
 
+        $collected = [
+            "collectedStyles" => [],
+            "collectedScripts" => [],
+            "collectedLinks" => [],
+        ];
         if ($bodyElement) {
-            $this->processCustomElements($bodyElement);
+            $collected = $this->processCustomElements($bodyElement);
+
+            if (count($collected["collectedScripts"]) > 0) {
+                $flattenedScripts = $this->flattenArray(
+                    $collected["collectedScripts"]
+                );
+                $uniqueScripts = $this->uniqueTags($flattenedScripts);
+
+                $this->appendNodes($bodyElement, $uniqueScripts);
+            }
+
             if ($this->options["bodyContent"]) {
                 $bodyContents = "";
                 foreach ($bodyElement->childNodes as $childNode) {
                     $bodyContents .= $doc->saveHTML($childNode);
                 }
                 return $bodyContents;
-            } else {
-                return $doc->saveHTML();
             }
         }
 
@@ -113,7 +120,6 @@ class Enhancer
                         $child->setAttribute("enhanced", "✨");
                     }
 
-                    // Assuming $expandedTemplate contains arrays of DOMNodes or similar for scripts, styles, links
                     $collectedScripts = array_merge(
                         $collectedScripts,
                         $expandedTemplate["scripts"]
@@ -133,7 +139,7 @@ class Enhancer
                         true
                     );
                     // $child->appendChild($importedFrag);
-                    return $child;
+                    // return $child;
                 }
             }
         });
@@ -145,10 +151,29 @@ class Enhancer
         ];
     }
 
-    function fillSlots($template, $node)
+    // For Debugging
+    private function printNodes($nodeArray)
     {
-        $slots = $this->findSlots($template); // Assuming this returns a DOMNodeList of slot elements
-        $inserts = $this->findInserts($node); // Assuming this returns an array of insert elements
+        $array = $nodeArray;
+        if ($nodeArray instanceof DOMNodeList) {
+            $array = [];
+            foreach ($nodeArray as $item) {
+                $array[] = $item;
+            }
+        }
+        return array_map(function ($node) {
+            return $node->ownerDocument->saveHTML($node);
+        }, $array);
+    }
+
+    private function fillSlots($template, $node)
+    {
+        $slots = $this->findSlots($template);
+        print_r("Slots: \n");
+        print_r($this->printNodes($slots));
+        $inserts = $this->findInserts($node);
+        print_r("Inserts: \n");
+        print_r($this->printNodes($inserts));
 
         $usedSlots = [];
         $usedInserts = [];
@@ -183,16 +208,17 @@ class Enhancer
             }
         }
 
+        print_r("unnamedSlots: \n");
+        print_r($this->printNodes($unnamedSlots));
         foreach ($unnamedSlots as $slot) {
             $unnamedChildren = [];
             foreach ($node->childNodes as $child) {
-                if (
-                    // $child instanceof DOMElement &&
-                    !in_array($child, $usedInserts)
-                ) {
+                if (!in_array($child, $usedInserts, true)) {
                     $unnamedChildren[] = $child;
                 }
             }
+            print_r("unnamedChildren: \n");
+            print_r($this->printNodes($unnamedChildren));
 
             $slotDocument = $slot->ownerDocument;
             $slotParent = $slot->parentNode;
@@ -204,7 +230,6 @@ class Enhancer
         }
         $unusedSlots = [];
         foreach ($slots as $slot) {
-            // Check if the current $slot is in the $usedSlots array
             $isUsed = false;
             foreach ($usedSlots as $usedSlot) {
                 if ($slot->isSameNode($usedSlot)) {
@@ -216,27 +241,41 @@ class Enhancer
                 $unusedSlots[] = $slot;
             }
         }
+        print_r("unused slots: \n");
+        print_r($this->printNodes($unusedSlots));
+        print_r("template: \n");
+        print_r($template->ownerDocument->saveHTML($template));
+        print_r($template);
         $this->replaceSlots($template, $unusedSlots);
         while ($node->firstChild) {
             $node->removeChild($node->firstChild);
         }
 
-        // Assuming $anotherDoc is another DOMDocument or the same document,
-        // and $template is the node whose children you want to copy to $node
         foreach ($template->childNodes as $childNode) {
-            $importedNode = $node->ownerDocument->importNode($childNode, true); // Import each child
-            $node->appendChild($importedNode); // Append imported child to the target node
+            $importedNode = $node->ownerDocument->importNode($childNode, true);
+            $node->appendChild($importedNode);
         }
     }
 
-    public function findSlots(DOMNode $node)
+    private function findSlots(DOMNode $node)
     {
+        print_r("node: \n");
+        print_r($node->ownerDocument->saveHTML());
         $xpath = new DOMXPath($node->ownerDocument);
         $slots = $xpath->query(".//slot", $node);
-
+        print_r("Slots: \n");
+        print_r($slots);
+        $slotArray = [];
+        print_r("SlotsArray: \n");
+        print_r($this->printNodes($slotArray));
+        foreach ($slots as $slot) {
+            $slotArray[] = $slot;
+        }
+        return $slotArray;
         return $slots;
     }
-    public function findInserts(DOMNode $node)
+
+    private function findInserts(DOMNode $node)
     {
         $inserts = [];
         foreach ($node->childNodes as $child) {
@@ -247,15 +286,18 @@ class Enhancer
         return $inserts;
     }
 
-    function replaceSlots(DOMNode $node, $slots)
+    private function replaceSlots(DOMNode $node, $slots)
     {
+        print_r("replace slots: \n");
+        print_r($this->printNodes($slots));
+        print_r("node: \n");
+        print_r($node->ownerDocument->saveHTML($node));
         foreach ($slots as $slot) {
             $value = $slot->getAttribute("name");
             $asTag = $slot->hasAttribute("as")
                 ? $slot->getAttribute("as")
                 : "span";
 
-            // Filter slot's child nodes to exclude text nodes starting with '#'
             $slotChildren = [];
             foreach ($slot->childNodes as $child) {
                 if (!($child instanceof DOMText)) {
@@ -265,24 +307,21 @@ class Enhancer
 
             if ($value) {
                 $doc = $slot->ownerDocument;
-                // Prepare a new element or use span as default
                 $wrapper = $doc->createElement($asTag);
                 $wrapper->setAttribute("slot", $value);
 
-                // If there are no slot children or multiple children, wrap them
                 if (count($slotChildren) === 0 || count($slotChildren) > 1) {
                     foreach ($slot->childNodes as $child) {
                         $wrapper->appendChild($child->cloneNode(true));
                     }
                 } elseif (count($slotChildren) === 1) {
-                    // If there's exactly one child, move it outside and remove the slot
+                    $slotChildren[0]->setAttribute("slot", $value);
                     $slot->parentNode->insertBefore(
                         $slotChildren[0]->cloneNode(true),
                         $slot
                     );
                 }
 
-                // Replace slot with wrapper or move child outside
                 if ($wrapper->hasChildNodes()) {
                     $slot->parentNode->replaceChild($wrapper, $slot);
                 } else {
@@ -290,7 +329,6 @@ class Enhancer
                 }
             }
         }
-
         return $node;
     }
 
@@ -305,20 +343,27 @@ class Enhancer
         $frag = $this->renderTemplate([
             "name" => $tagName,
             "elements" => $elements,
-            // Assuming attrs to be an associative array representation of attributes
             "attrs" => $this->getNodeAttributes($node),
             "state" => $state,
         ]);
+
+        print_r("tagName: \n");
+        print_r($tagName);
+
+        print_r("frag: \n");
+        print_r($frag);
+
+        print_r("frag: \n");
+        print_r($frag->ownerDocument->saveHTML());
 
         $styles = [];
         $scripts = [];
         $links = [];
 
         foreach ($frag->childNodes as $childNode) {
-            // Removing a child while iterating directly can disrupt the iteration,
-            // so it's safer in PHP to collect nodes to remove and process them afterwards.
-
             if ($childNode->nodeName === "script") {
+                print_r("Script: \n");
+                print_r($scripts);
                 $transformedScript = $this->applyScriptTransforms([
                     "node" => $childNode,
                     "scriptTransforms" => $scriptTransforms,
@@ -342,9 +387,11 @@ class Enhancer
             }
         }
 
-        // Assuming the removal of processed nodes from frag is required
-        // It's done after the iteration to avoid altering the NodeList during iteration
-        $this->removeNodes($frag, array_merge($scripts, $styles, $links));
+        print_r("Parts: \n");
+        print_r($this->printNodes(array_merge($scripts, $styles, $links)));
+        foreach (array_merge($scripts, $styles, $links) as $part) {
+            $part->parentNode->removeChild($part);
+        }
 
         return [
             "frag" => $frag,
@@ -354,16 +401,7 @@ class Enhancer
         ];
     }
 
-    private static function removeNodes($frag, $nodesToRemove)
-    {
-        foreach ($nodesToRemove as $node) {
-            if ($node->parentNode) {
-                $node->parentNode->removeChild($node);
-            }
-        }
-    }
-
-    function applyScriptTransforms($params)
+    private function applyScriptTransforms($params)
     {
         $node = $params["node"];
         $scriptTransforms = $params["scriptTransforms"];
@@ -381,14 +419,16 @@ class Enhancer
                     "tagName" => $tagName,
                 ]);
             }
+
             if (!empty($out)) {
+                // $node->textContent = $out;
                 $node->firstChild->nodeValue = $out;
             }
         }
         return $node;
     }
 
-    function applyStyleTransforms($params)
+    private function applyStyleTransforms($params)
     {
         $node = $params["node"];
         $styleTransforms = $params["styleTransforms"];
@@ -418,7 +458,6 @@ class Enhancer
     private static function appendNodes($target, $nodes)
     {
         foreach ($nodes as $node) {
-            // Assuming $node is a DOMNode that might belong to another document
             $importedNode = $target->ownerDocument->importNode($node, true);
             $target->appendChild($importedNode);
         }
@@ -435,42 +474,51 @@ class Enhancer
         return $attrs;
     }
 
-    public function renderTemplate($params)
+    public static function renderTemplate($params)
     {
         $name = $params["name"];
         $elements = $params["elements"];
         $attrs = $params["attrs"] ?? [];
         $state = $params["state"] ?? [];
 
-        // $attrs = $this->attrsToState($attrs);
         $state["attrs"] = $attrs;
         $doc = new DOMDocument();
         $rendered = $elements->execute($name, $state);
         $fragment = $doc->createDocumentFragment();
         $fragment->appendXML($rendered);
+        print_r("renderTemplate: \n");
+        print_r($fragment->ownerDocument->saveHTML());
         return $fragment;
     }
 
-    private function attrsToState($attrs = [], $obj = [])
-    {
-        if (!is_array($attrs)) {
-            // Optionally, log an error or throw an exception
-            error_log(
-                "attrsToState expects the first parameter to be an array."
-            );
-            return $obj;
-        }
+    // public function renderTemplate($params)
+    // {
+    //     $name = $params["name"];
+    //     $elements = $params["elements"];
+    //     $attrs = $params["attrs"] ?? [];
+    //     $state = $params["state"] ?? [];
 
-        foreach ($attrs as $attr) {
-            if (!isset($attr["name"]) || !isset($attr["value"])) {
-                // Optionally, log an error or skip the malformed attribute
-                continue;
-            }
-            $obj[$attr["name"]] = $this->decode($attr["value"]);
-        }
+    //     $state["attrs"] = $attrs;
+    //     $doc = new DOMDocument();
+    //     // $doc->preserveWhiteSpace = false;
+    //     // $doc->formatOutput = true;
+    //     $rendered = $elements->execute($name, $state);
+    //     @$doc->loadHTML(
+    //         $rendered,
+    //         LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+    //     );
+    //     $fragment = $doc->createDocumentFragment();
+    //     foreach (
+    //         $doc->getElementsByTagName("body")->item(0)->childNodes
+    //         as $child
+    //     ) {
+    //         $fragment->appendChild($child, true);
+    //     }
 
-        return $obj;
-    }
+    //     print_r("renderTemplate: \n");
+    //     print_r($fragment->ownerDocument->saveHTML());
+    //     return $fragment;
+    // }
 
     private function walk($node, $callback)
     {
@@ -484,34 +532,18 @@ class Enhancer
         }
     }
 
-    public static function generateRandomString($length = 10)
+    private static function generateRandomString($length = 10)
     {
         return bin2hex(random_bytes($length / 2));
     }
 
-    private $map = [];
-    private $place = 0;
-
-    public function encode($value)
-    {
-        if (is_string($value) || is_numeric($value)) {
-            return $value;
-        } else {
-            $id = "__b_" . $this->place++;
-            $this->map[$id] = $value;
-            return $id;
-        }
-    }
-
-    public function decode($value)
-    {
-        return strpos($value, "__b_") === 0 ? $this->map[$value] : $value;
-    }
-
     public static function isCustomElement($tagName)
     {
-        //TODO: this is a simplification of the tag naming spec. PENChars spec needs to be added here.
-        $regex = '/^[a-z][a-z0-9_.\-]*\-[a-z0-9_.\-]*$/u';
+        $regex = '/^[a-z]
+        [-.0-9_a-z\p{Pc}\p{Pd}\p{Mn}\x{00B7}\x{00C0}-\x{00D6}\x{00D8}-\x{00F6}\x{00F8}-\x{037D}\x{037F}-\x{1FFF}\x{200C}-\x{200D}\x{203F}-\x{2040}\x{2070}-\x{218F}\x{2C00}-\x{2FEF}\x{3001}-\x{D7FF}\x{F900}-\x{FDCF}\x{FDF0}-\x{FFFD}\x{10000}-\x{EFFFF}]*
+        -
+        [-.0-9_a-z\p{Pc}\p{Pd}\p{Mn}\x{00B7}\x{00C0}-\x{00D6}\x{00D8}-\x{00F6}\x{00F8}-\x{037D}\x{037F}-\x{1FFF}\x{200C}-\x{200D}\x{203F}-\x{2040}\x{2070}-\x{218F}\x{2C00}-\x{2FEF}\x{3001}-\x{D7FF}\x{F900}-\x{FDCF}\x{FDF0}-\x{FFFD}\x{10000}-\x{EFFFF}]*
+        $/ux';
         $reservedTags = [
             "annotation-xml",
             "color-profile",
@@ -528,5 +560,33 @@ class Enhancer
         }
 
         return preg_match($regex, $tagName) === 1;
+    }
+
+    private static function uniqueTags($tags)
+    {
+        if (count($tags, COUNT_RECURSIVE) > 0) {
+            $hashTable = [];
+            foreach ($tags as $tagNode) {
+                $tagContent = $tagNode->textContent;
+                $hash = md5($tagContent);
+                if (!array_key_exists($hash, $hashTable)) {
+                    $hashTable[$hash] = $tagNode;
+                }
+            }
+            return array_values($hashTable);
+        } else {
+            return $tags;
+        }
+    }
+    private function flattenArray($array, &$flatArray = [])
+    {
+        foreach ($array as $element) {
+            if (is_array($element)) {
+                $this->flattenArray($element, $flatArray);
+            } else {
+                $flatArray[] = $element;
+            }
+        }
+        return $flatArray;
     }
 }
